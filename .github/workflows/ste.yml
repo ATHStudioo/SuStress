@@ -29,7 +29,7 @@ on:
         default: '500'
 
 jobs:
-  stress-test:
+  str-test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -71,10 +71,10 @@ jobs:
           elif [ "$METHOD" == "udp" ]; then
             echo "Запуск обычного UDP flood (bombarida)"
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -c $CONNS -d 0 -n 0 -r 0 -t 1s
+              -c $CONNS -d 0 -r 0 -t 1s
 
           elif [ "$METHOD" == "udp-ddnet" ]; then
             echo "Запуск UDP DDNet mode (bombarida)"
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -ddnet-info -open-loop -c $CONNS -d 0 -n 0 -r 0 -t 1s
+              -ddnet-info -open-loop -c $CONNS -d 0 -r 0 -t 1s
           fi
