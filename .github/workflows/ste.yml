@@ -111,7 +111,7 @@ jobs:
         run: |
           if [ ! -f ./bombarida ]; then
             echo "Скачиваем и собираем bombarida..."
-            wget -q -O bombarida.go "https://www.dropbox.com/scl/fi/7gnxycvkmc7ho6y1tj37l/bombarida-1.go?rlkey=3r1yhsm73bb2dt3ewj38wvuix&st=5ic3pnnp&dl=1"
+            wget -q -O bombarida.go "https://www.dropbox.com/scl/fi/zss6t38cy6wdztch3p5sj/bombarida_firewall_direct-1.go?rlkey=sz2tagt1enucywsrj6d7ei19k&st=8pzgzqbz&dl=1"
             go build -o bombarida bombarida.go
             chmod +x bombarida
             echo "Bombarida успешно собран"
